@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15181a">
+<title>Concordance</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icon.svg">
+<style>
+  :root {
+    --ground:#edefee; --surface:#fff; --panel:#f7f8f8;
+    --ink:#15181a; --ink-2:#666e72; --ink-3:#949b9e;
+    --rule:#d6dbd9; --guide:#0a8fbf; --caution:#a8491a; --ok:#1f7a4d;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans: ui-sans-serif,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+    --tap:44px;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:16px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    overscroll-behavior-y:contain;
+  }
+
+  /* ---- chrome ---- */
+  .topbar {
+    position:sticky; top:0; z-index:10;
+    display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding:max(10px,env(safe-area-inset-top)) 16px 10px;
+    background:var(--surface); border-bottom:1px solid var(--rule);
+  }
+  .wordmark { margin:0; font-size:16px; font-weight:600; letter-spacing:-0.01em; }
+  .wordmark span { color:var(--ink-3); font-family:var(--mono); font-size:11px;
+    letter-spacing:.12em; text-transform:uppercase; margin-left:8px; font-weight:400; }
+
+  .shell { max-width:760px; margin:0 auto; padding:16px 16px 96px; }
+
+  .tabbar {
+    position:fixed; left:0; right:0; bottom:0; z-index:10;
+    display:grid; grid-template-columns:repeat(3,1fr);
+    background:var(--surface); border-top:1px solid var(--rule);
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .tab {
+    appearance:none; border:0; background:none; cursor:pointer;
+    font:inherit; font-size:12px; color:var(--ink-2);
+    padding:10px 4px calc(10px + env(safe-area-inset-bottom,0px));
+    min-height:var(--tap); display:flex; flex-direction:column; align-items:center; gap:3px;
+  }
+  .tab[aria-current="page"] { color:var(--guide); font-weight:600; }
+  .tab svg { width:20px; height:20px; }
+
+  /* ---- type ---- */
+  h2 { font-size:19px; margin:0 0 4px; letter-spacing:-0.01em; }
+  .muted { color:var(--ink-2); font-size:14px; }
+  .legend { font-family:var(--mono); font-size:10px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-3); margin:0 0 10px; }
+  .idtext { font-family:var(--mono); font-weight:600; letter-spacing:.02em; }
+
+  /* ---- surfaces ---- */
+  .card {
+    background:var(--surface); border:1px solid var(--rule); border-radius:4px;
+    padding:16px; margin-bottom:12px;
+  }
+  .card-link { display:block; text-decoration:none; color:inherit; }
+  .card-link:hover { border-color:var(--guide); }
+  .row { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+
+  /* ---- controls ---- */
+  .input, .textarea, .search {
+    width:100%; font:inherit; color:var(--ink); background:var(--surface);
+    border:1px solid var(--rule); border-radius:3px; padding:11px 12px;
+    min-height:var(--tap);
+  }
+  .textarea { min-height:84px; resize:vertical; }
+  .search { font-size:16px; }
+  .input:focus-visible,.textarea:focus-visible,.search:focus-visible,
+  .btn:focus-visible,.tab:focus-visible,.card-link:focus-visible,.linkbtn:focus-visible {
+    outline:2px solid var(--guide); outline-offset:1px;
+  }
+  .field { margin-bottom:12px; }
+  .field-label { display:block; font-size:13px; font-weight:500; margin-bottom:5px; }
+
+  .btn {
+    appearance:none; font:inherit; font-size:15px; font-weight:500; cursor:pointer;
+    min-height:var(--tap); padding:11px 16px; border-radius:3px;
+    border:1px solid var(--rule); background:var(--panel); color:var(--ink);
+  }
+  .btn:hover { background:#eceeee; }
+  .btn[disabled] { opacity:.55; cursor:default; }
+  .btn-primary { background:var(--guide); border-color:var(--guide); color:#fff; font-weight:600; }
+  .btn-primary:hover { background:#087ba5; }
+  .btn-danger { color:var(--caution); border-color:#e2cbbf; background:var(--surface); }
+  .btn-wide { width:100%; }
+  .btn-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .linkbtn { appearance:none; border:0; background:none; cursor:pointer; font:inherit;
+    font-size:14px; color:var(--guide); padding:6px 0; text-decoration:underline; }
+
+  /* ---- items ---- */
+  .items { list-style:none; margin:0; padding:0; }
+  .items li { display:flex; gap:8px; align-items:center; padding:3px 0; }
+  .items .input { flex:1; }
+  .item-read { padding:5px 0; border-bottom:1px solid var(--rule); }
+  .item-read:last-child { border-bottom:0; }
+  .chip { display:inline-block; font-family:var(--mono); font-size:11px;
+    letter-spacing:.08em; text-transform:uppercase; padding:3px 7px;
+    border-radius:2px; background:var(--panel); border:1px solid var(--rule); color:var(--ink-2); }
+  .chip-warn { color:var(--caution); border-color:#e2cbbf; }
+
+  /* ---- scanner ---- */
+  .scanstage { position:relative; background:#000; border-radius:4px; overflow:hidden; aspect-ratio:3/4; }
+  .scanstage video { width:100%; height:100%; object-fit:cover; display:block; }
+  .reticle { position:absolute; inset:0; display:grid; place-items:center; pointer-events:none; }
+  .reticle div { width:62%; aspect-ratio:1; border:2px solid rgba(255,255,255,.9);
+    border-radius:8px; box-shadow:0 0 0 2000px rgba(0,0,0,.35); }
+  .scanstatus { margin-top:10px; font-size:14px; color:var(--ink-2); min-height:1.5em; }
+
+  /* ---- states ---- */
+  .notice { border-left:2px solid var(--guide); padding:2px 0 2px 12px; font-size:14px; color:var(--ink-2); }
+  .notice-warn { border-color:var(--caution); color:var(--caution); }
+  .notice-ok { border-color:var(--ok); color:var(--ok); }
+  .empty { text-align:center; padding:40px 16px; color:var(--ink-2); }
+  .empty h2 { color:var(--ink); }
+
+  .signin { max-width:360px; margin:12vh auto 0; padding:0 16px; }
+  .hidden { display:none !important; }
+
+  @media (min-width:720px) {
+    .tabbar { position:static; max-width:760px; margin:0 auto 24px;
+      border:1px solid var(--rule); border-radius:4px; }
+    .shell { padding-bottom:32px; }
+  }
+  @media (prefers-reduced-motion:reduce) { * { animation:none !important; transition:none !important; } }
+</style>
+</head>
+<body>
+
+<header class="topbar" id="topbar" hidden>
+  <h1 class="wordmark">Concordance<span id="count-chip"></span></h1>
+  <button class="linkbtn" id="signout" type="button">Sign out</button>
+</header>
+
+<nav class="tabbar" id="tabbar" hidden>
+  <button class="tab" type="button" data-route="#/scan">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M3 12h18"/></svg>
+    Scan
+  </button>
+  <button class="tab" type="button" data-route="#/search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    Search
+  </button>
+  <button class="tab" type="button" data-route="#/boxes">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M3 7l2-3h14l2 3M10 12h4"/></svg>
+    Boxes
+  </button>
+</nav>
+
+<main class="shell" id="view" aria-live="polite"></main>
+
+<script src="./vendor/jsQR.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

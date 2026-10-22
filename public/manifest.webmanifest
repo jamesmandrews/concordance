@@ -1,0 +1,14 @@
+{
+  "name": "Concordance",
+  "short_name": "Concordance",
+  "description": "Scan a QR label, find out what is in the box",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#edefee",
+  "theme_color": "#15181a",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
