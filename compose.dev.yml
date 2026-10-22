@@ -1,0 +1,16 @@
+# Development overlay: mounts the source over the image so an edit to the
+# frontend or the server shows up without a rebuild.
+#
+#   docker compose -f docker-compose.yml -f compose.dev.yml up -d
+#
+# Not loaded automatically, and deliberately not named docker-compose.override.yml,
+# which Compose would pick up on the server too.
+
+services:
+  api:
+    volumes:
+      - ./public:/app/public:ro
+      - ./src:/app/src:ro
+      - ./db:/app/db:ro
+    environment:
+      LOG_LEVEL: debug
