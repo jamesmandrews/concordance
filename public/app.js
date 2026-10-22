@@ -72,7 +72,6 @@ const routes = {
   '#/scan': renderScan,
   '#/search': renderSearch,
   '#/boxes': renderBoxes,
-  '#/unclaimed': renderUnclaimed,
 };
 
 function go(hash) {
@@ -227,14 +226,14 @@ async function renderBox(rawId) {
     return;
   }
 
-  const data = await api(`labels/${encodeURIComponent(id)}`);
+  const data = await api(`boxes/${encodeURIComponent(id)}`);
   const box = data.box ?? { name: '', location: '', notes: '', items: [] };
   const claimed = data.claimed;
 
   view.innerHTML = `
     <div class="row" style="margin-bottom:12px">
       <span class="idtext">${esc(id)}</span>
-      <span class="chip ${claimed ? '' : 'chip-warn'}">${claimed ? 'claimed' : data.printed ? 'printed, empty' : 'unknown label'}</span>
+      <span class="chip ${claimed ? '' : 'chip-warn'}">${claimed ? 'claimed' : 'empty'}</span>
     </div>
     ${claimed ? '' : `<p class="notice" style="margin-bottom:12px">Nothing recorded against this label yet. Fill it in and it becomes a box.</p>`}
     <form class="card" id="box-form">
@@ -312,9 +311,9 @@ async function renderBox(rawId) {
 
 function resultCard(r) {
   const items = (r.items ?? []).slice(0, 6).join(', ');
-  return `<a class="card card-link" href="#/box/${encodeURIComponent(r.label_id)}">
+  return `<a class="card card-link" href="#/box/${encodeURIComponent(r.id)}">
     <div class="row"><strong>${esc(r.name) || '<span class="muted">Unnamed box</span>'}</strong>
-    <span class="idtext muted" style="font-size:13px">${esc(r.label_id)}</span></div>
+    <span class="idtext muted" style="font-size:13px">${esc(r.id)}</span></div>
     ${r.location ? `<p class="muted" style="margin:4px 0 0">${esc(r.location)}</p>` : ''}
     ${items ? `<p class="muted" style="margin:4px 0 0">${esc(items)}${(r.items?.length ?? 0) > 6 ? '…' : ''}</p>` : ''}
   </a>`;
@@ -356,14 +355,11 @@ async function renderSearch() {
 async function renderBoxes() {
   const { boxes } = await api('boxes');
   view.innerHTML = `
-    <div class="row" style="margin-bottom:12px">
-      <p class="legend" style="margin:0">All boxes</p>
-      <a class="linkbtn" href="#/unclaimed">Unused labels</a>
-    </div>
+    <p class="legend">All boxes</p>
     ${boxes.length ? boxes.map((b) => `
-      <a class="card card-link" href="#/box/${encodeURIComponent(b.label_id)}">
+      <a class="card card-link" href="#/box/${encodeURIComponent(b.id)}">
         <div class="row"><strong>${esc(b.name) || '<span class="muted">Unnamed box</span>'}</strong>
-        <span class="idtext muted" style="font-size:13px">${esc(b.label_id)}</span></div>
+        <span class="idtext muted" style="font-size:13px">${esc(b.id)}</span></div>
         <p class="muted" style="margin:4px 0 0">
           ${b.location ? esc(b.location) + ' · ' : ''}${b.item_count} item${b.item_count === 1 ? '' : 's'}
         </p>
@@ -371,41 +367,6 @@ async function renderBoxes() {
     : `<div class="empty"><h2>No boxes yet</h2>
         <p class="muted">Scan a printed label and tell it what went in.</p>
         <button class="btn btn-primary" type="button" onclick="location.hash='#/scan'">Scan a label</button></div>`}`;
-}
-
-async function renderUnclaimed() {
-  const { labels } = await api('labels/unclaimed');
-  view.innerHTML = `
-    <p class="legend">Printed, not yet used</p>
-    <p class="muted" style="margin:0 0 16px">Labels Quire minted that are not on a box yet.</p>
-    <div class="card">
-      <p class="legend">Import a Quire manifest</p>
-      <input type="file" id="manifest" accept="application/json,.json">
-      <p class="muted" style="margin:8px 0 0">Loads the IDs from a printed sheet so they show up here.</p>
-      <p class="notice hidden" id="import-result" style="margin-top:10px"></p>
-    </div>
-    ${labels.length
-      ? `<div class="card">${labels.map((l) => `<div class="item-read"><a class="idtext" style="color:inherit"
-           href="#/box/${encodeURIComponent(l.id)}">${esc(l.id)}</a></div>`).join('')}</div>`
-      : `<p class="muted">None — every imported label is on a box.</p>`}`;
-
-  $('#manifest').addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const out = $('#import-result');
-    out.classList.remove('hidden', 'notice-warn');
-    out.textContent = 'Importing…';
-    try {
-      const manifest = JSON.parse(await file.text());
-      const r = await api('labels/import', { method: 'POST', body: manifest });
-      out.textContent = `Imported ${r.imported} new label${r.imported === 1 ? '' : 's'}`
-        + `${r.skipped ? `, skipped ${r.skipped} that were not valid IDs` : ''}. ${r.total} known in total.`;
-      setTimeout(render, 1200);
-    } catch (err) {
-      out.classList.add('notice-warn');
-      out.textContent = err instanceof SyntaxError ? 'That file is not valid JSON.' : err.message;
-    }
-  });
 }
 
 /* ---------- boot ---------- */

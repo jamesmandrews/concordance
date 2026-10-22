@@ -26,6 +26,11 @@ export async function waitForDatabase({ attempts = 30, delayMs = 1000 } = {}) {
 // A migration runner rather than a dependency: the whole contract is "apply
 // each db/*.sql once, in filename order, inside a transaction".
 export async function migrate(log = console) {
+  // Fastify's logger has .info, the console fallback has .log. Pick once:
+  // `log.info?.(m) ?? log.log(m)` looks equivalent but is not, because info()
+  // returns undefined on success and so the fallback always fires too.
+  const note = typeof log.info === 'function' ? (m) => log.info(m) : (m) => log.log(m);
+
   await query(`
     create table if not exists migrations (
       filename   text primary key,
@@ -46,12 +51,14 @@ export async function migrate(log = console) {
       await client.query(sql);
       await client.query('insert into migrations (filename) values ($1)', [file]);
       await client.query('commit');
-      log.info?.(`migrated ${file}`) ?? log.log(`migrated ${file}`);
     } catch (err) {
-      await client.query('rollback');
+      await client.query('rollback').catch(() => {});
       throw new Error(`migration ${file} failed: ${err.message}`, { cause: err });
     } finally {
       client.release();
     }
+    // Outside the try: a logging failure must never look like a failed
+    // migration, nor trigger a rollback of work that already committed.
+    note(`migrated ${file}`);
   }
 }

@@ -11,10 +11,8 @@ Quire is deliberately stateless; Concordance is where the knowledge lives.
 ## What it does
 
 - **Scan** a label with the phone camera and see what is in that box
-- **Adopt** an unknown label — print first, decide what goes in it later
+- **Claim** a blank label — print first, decide what goes in it later
 - **Search** every item, name, location and note at once
-- **Import** a Quire manifest so a freshly printed sheet is known before
-  anything is stuck to a box
 
 ## Stack
 
@@ -94,13 +92,15 @@ accounts a small change later:
 ## Data model
 
 ```
-labels   id, prefix, suffix, created_at
-boxes    label_id → labels, name, location, notes, updated_at, updated_by
-items    id, label_id → labels, description, position
+boxes   id (the label), prefix, suffix, name, location, notes,
+        created_at, updated_at, updated_by
+items   id, box_id → boxes, description, position
 ```
 
-A label and a box are separate on purpose: a printed label that is not on
-anything yet is a real state, and the one the print-first workflow depends on.
+The label ID is the primary key. There is no separate table of printed
+labels: an unused label needs no row, because the unused labels are sitting
+in the drawer, which is a more reliable record than a database. A box exists
+from the moment someone scans its label and says what went in.
 
 Contents are rows rather than a blob of text, which is what makes search a
 single query. `box_search` is a view combining the box's own fields with every
@@ -117,13 +117,11 @@ All endpoints except `POST /api/session` require the session cookie.
 | `GET /api/session` | is this browser signed in |
 | `POST /api/session` | sign in with `{ password }` |
 | `DELETE /api/session` | sign out |
-| `GET /api/labels/:id` | what is in this box, or that it is unclaimed |
+| `GET /api/boxes/:id` | what is in this box, or that it is still empty |
 | `PUT /api/boxes/:id` | create or replace a box |
 | `DELETE /api/boxes/:id` | clear a box, leaving the label reusable |
 | `GET /api/boxes` | every box, most recently changed first |
 | `GET /api/search?q=` | ranked full-text search |
-| `POST /api/labels/import` | load a Quire manifest |
-| `GET /api/labels/unclaimed` | printed but not yet on a box |
 
 IDs are validated against the shape Quire mints, so scanning a product barcode
 returns a 400 rather than creating a junk row.
