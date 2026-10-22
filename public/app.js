@@ -136,48 +136,59 @@ function renderSignIn() {
 
 /* ---------- scan ---------- */
 
-async function renderScan() {
-  view.innerHTML = `
-    <p class="legend">Scan</p>
-    <div class="scanstage"><video id="cam" playsinline muted></video><div class="reticle"><div></div></div></div>
-    <p class="scanstatus" id="scanstatus">Starting camera…</p>
-    <div class="card">
-      <p class="legend">Or type the ID</p>
-      <form id="manual-form" class="btn-row">
-        <input class="input idtext" id="manual" placeholder="ATTIC-K7M2-9XQZ"
-               autocapitalize="characters" autocomplete="off" spellcheck="false" style="flex:1;min-width:180px">
-        <button class="btn" type="submit">Open</button>
-      </form>
-      <p class="muted" style="margin:8px 0 0">The ID is printed beside every QR code, for when a label is too scuffed to scan.</p>
-    </div>`;
+// The camera is never opened on page load. Asking for it the moment the app
+// starts means a permission prompt every single visit -- iOS Safari does not
+// persist the grant per site unless the user sets it explicitly -- and most
+// visits are a search, not a scan. So: open it on an explicit tap, and skip
+// the tap only when the browser can tell us permission is already granted.
+async function cameraAlreadyGranted() {
+  try {
+    const status = await navigator.permissions?.query({ name: 'camera' });
+    return status?.state === 'granted';
+  } catch {
+    // Safari does not support querying 'camera'; treat unknown as not granted
+    // so we show the button rather than triggering a surprise prompt.
+    return false;
+  }
+}
 
-  $('#manual-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const id = $('#manual').value.trim().toUpperCase();
-    if (id) go(`#/box/${encodeURIComponent(id)}`);
-  });
+function renderScanIdle(reason) {
+  const stage = $('#stage');
+  if (!stage) return;
+  stage.innerHTML = `<button class="btn btn-primary scanstart" type="button" id="start-cam">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="26" height="26"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3.2"/></svg>
+      ${reason ? 'Try the camera again' : 'Start camera'}
+    </button>`;
+  $('#scanstatus').textContent = reason || 'The camera opens only when you ask, so this page does not prompt on every visit.';
+  $('#start-cam').addEventListener('click', startCamera);
+}
 
+async function startCamera() {
+  const stage = $('#stage');
   const status = $('#scanstatus');
-  const video = $('#cam');
+  if (!stage) return;
 
   if (!navigator.mediaDevices?.getUserMedia) {
     status.innerHTML = window.isSecureContext
       ? 'This browser has no camera API. Type the ID instead.'
       : '<span style="color:var(--caution)">The camera needs HTTPS. Over plain HTTP the browser blocks it — type the ID, or reach this page over https.</span>';
+    stage.innerHTML = '';
     return;
   }
 
+  status.textContent = 'Starting camera…';
   try {
     activeStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' } }, audio: false,
     });
   } catch (err) {
-    status.innerHTML = err.name === 'NotAllowedError'
-      ? 'Camera permission denied. Allow it in site settings, or type the ID.'
-      : `Camera unavailable (${esc(err.name)}). Type the ID instead.`;
-    return;
+    return renderScanIdle(err.name === 'NotAllowedError'
+      ? 'Camera permission was refused. Allow it in site settings, or type the ID below.'
+      : `Camera unavailable (${err.name}). Type the ID below.`);
   }
 
+  stage.innerHTML = '<video id="cam" playsinline muted></video><div class="reticle"><div></div></div>';
+  const video = $('#cam');
   video.srcObject = activeStream;
   await video.play().catch(() => {});
   status.textContent = 'Point at a label.';
@@ -187,8 +198,7 @@ async function renderScan() {
   let busy = false;
 
   const tick = async () => {
-    // Bail the moment the view changed under us.
-    if (activeStream !== started) return;
+    if (activeStream !== started) return;   // the view changed under us
     if (!busy) {
       busy = true;
       try {
@@ -208,6 +218,32 @@ async function renderScan() {
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+}
+
+async function renderScan() {
+  view.innerHTML = `
+    <p class="legend">Scan</p>
+    <div class="scanstage" id="stage"></div>
+    <p class="scanstatus" id="scanstatus"></p>
+    <div class="card">
+      <p class="legend">Or type the ID</p>
+      <form id="manual-form" class="btn-row">
+        <input class="input idtext" id="manual" placeholder="ATTIC-K7M2-9XQZ"
+               autocapitalize="characters" autocomplete="off" spellcheck="false" style="flex:1;min-width:180px">
+        <button class="btn" type="submit">Open</button>
+      </form>
+      <p class="muted" style="margin:8px 0 0">The ID is printed beside every QR code, for when a label is too scuffed to scan.</p>
+    </div>`;
+
+  $('#manual-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const id = $('#manual').value.trim().toUpperCase();
+    if (id) go(`#/box/${encodeURIComponent(id)}`);
+  });
+
+  // Already granted means starting costs no prompt, so go straight in.
+  if (await cameraAlreadyGranted()) startCamera();
+  else renderScanIdle();
 }
 
 /* ---------- box ---------- */

@@ -112,7 +112,11 @@
   .chip-warn { color:var(--caution); border-color:#e2cbbf; }
 
   /* ---- scanner ---- */
-  .scanstage { position:relative; background:#000; border-radius:4px; overflow:hidden; aspect-ratio:3/4; }
+  .scanstage { position:relative; background:#000; border-radius:4px; overflow:hidden;
+    aspect-ratio:3/4; display:grid; place-items:center; }
+  .scanstage:empty { background:var(--panel); border:1px dashed var(--rule); }
+  .scanstart { display:flex; flex-direction:column; align-items:center; gap:8px;
+    padding:20px 26px; font-size:16px; }
   .scanstage video { width:100%; height:100%; object-fit:cover; display:block; }
   .reticle { position:absolute; inset:0; display:grid; place-items:center; pointer-events:none; }
   .reticle div { width:62%; aspect-ratio:1; border:2px solid rgba(255,255,255,.9);
