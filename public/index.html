@@ -133,6 +133,17 @@
   .signin { max-width:360px; margin:12vh auto 0; padding:0 16px; }
   .hidden { display:none !important; }
 
+  /* ---- autosave ---- */
+  .savestate {
+    display:flex; align-items:center; gap:6px;
+    font-family:var(--mono); font-size:11px; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--ink-3); white-space:nowrap;
+  }
+  .savestate::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .savestate:empty { display:none; }
+  .savestate-saved { color:var(--ok); }
+  .savestate-error { color:var(--caution); }
+
   @media (min-width:720px) {
     .tabbar { position:static; max-width:760px; margin:0 auto 24px;
       border:1px solid var(--rule); border-radius:4px; }
@@ -145,6 +156,10 @@
 
 <header class="topbar" id="topbar" hidden>
   <h1 class="wordmark">Concordance<span id="count-chip"></span></h1>
+  <!-- Autosave state lives in the sticky topbar: on a phone the keyboard
+       covers the bottom of the page, which is exactly where a status line
+       under the form would sit. -->
+  <p class="savestate" id="savestate" role="status" aria-live="polite"></p>
   <button class="linkbtn" id="signout" type="button">Sign out</button>
 </header>
 

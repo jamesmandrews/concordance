@@ -74,6 +74,16 @@ const routes = {
   '#/boxes': renderBoxes,
 };
 
+// Moving off the box view: push whatever has not gone up yet, then stop the
+// autosaver from reporting into a view it no longer owns.
+function leaveBox() {
+  const leaving = activeSave;
+  activeSave = null;
+  if (leaving) { leaving.beacon(); leaving.detach(); }
+  const pill = document.getElementById('savestate');
+  if (pill) { pill.textContent = ''; pill.className = 'savestate'; }
+}
+
 function go(hash) {
   if (location.hash === hash) render();
   else location.hash = hash;
@@ -81,6 +91,7 @@ function go(hash) {
 
 async function render() {
   stopCamera();
+  leaveBox();
   const hash = location.hash || '#/scan';
   for (const tab of document.querySelectorAll('.tab')) {
     const on = hash === tab.dataset.route;
@@ -104,6 +115,7 @@ function setChrome(signedIn) {
 
 function renderSignIn() {
   stopCamera();
+  leaveBox();
   setChrome(false);
   view.className = 'signin';
   view.innerHTML = `
@@ -246,12 +258,129 @@ async function renderScan() {
   else renderScanIdle();
 }
 
+/* ---------- autosave ----------
+ *
+ * The box form has no save button. A box gets filled in standing over it with
+ * a phone in one hand, and a button is the one step in that sequence nobody
+ * remembers: the keyboard covers it, the phone sleeps, the tab gets swiped
+ * away, and the typing is gone.
+ *
+ * So every edit lands in two places. A draft in localStorage, written
+ * synchronously on the keystroke, which survives a refresh, a crash or a lost
+ * network. And a debounced PUT to the server. The draft is dropped only once
+ * the server has acknowledged the exact payload the draft holds -- a failed
+ * save therefore leaves the work recoverable rather than lost. */
+
+const DRAFT = 'concordance.draft.';
+const DEBOUNCE = 600;     // long enough to coalesce a burst of typing
+const RETRY = 5000;
+
+const draft = {
+  read(id) {
+    try { const v = localStorage.getItem(DRAFT + id); return v ? JSON.parse(v) : null; }
+    catch { return null; }
+  },
+  write(id, payload) {
+    try { localStorage.setItem(DRAFT + id, JSON.stringify(payload)); }
+    catch { /* quota, or private mode -- the server is still being written to */ }
+  },
+  clear(id) {
+    try { localStorage.removeItem(DRAFT + id); } catch { /* private mode */ }
+  },
+};
+
+// collect() always builds its object in the same field order, so comparing
+// serialisations is enough to tell "nothing actually changed".
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// The autosaver for the box currently on screen, or null on every other view.
+let activeSave = null;
+
+function autosaver(id, collect, onState, known) {
+  let timer = null, retry = null, running = false, dirty = false, live = true;
+  let saved = known;        // the payload the server is known to hold
+
+  // A save can still be in the air after the view is replaced; it must finish
+  // (and clear its draft) without writing status into whatever is now on screen.
+  const emit = (kind, extra) => { if (live) onState(kind, extra); };
+
+  async function pump() {
+    if (!live || running) return;
+    running = true;
+    clearTimeout(retry); retry = null;
+    try {
+      // Re-collect each time round: edits made while a PUT was in the air are
+      // picked up here instead of queueing a second overlapping request.
+      while (dirty) {
+        const payload = collect();
+        dirty = false;
+        if (same(payload, saved)) continue;
+        draft.write(id, payload);
+        emit('saving');
+        try {
+          const data = await api(`boxes/${encodeURIComponent(id)}`, { method: 'PUT', body: payload });
+          saved = payload;
+          if (!dirty) draft.clear(id);          // nothing newer is relying on it
+          emit('saved', data);
+        } catch (err) {
+          dirty = true;                         // the draft is still the truth
+          if (err instanceof AuthError) { emit('auth'); return; }
+          emit('error', err);
+          if (live) retry = setTimeout(pump, RETRY);
+          return;
+        }
+      }
+    } finally {
+      running = false;
+    }
+  }
+
+  return {
+    // Called on every input event. The draft write is first and synchronous,
+    // so even a tab killed between keystroke and debounce loses nothing.
+    touch() {
+      dirty = true;
+      draft.write(id, collect());
+      clearTimeout(timer);
+      timer = setTimeout(pump, DEBOUNCE);
+    },
+    now() { clearTimeout(timer); return pump(); },
+    // Unload cannot await anything, so hand the request to the browser with
+    // keepalive and let it outlive the page. If it loses a race with a PUT
+    // already in flight and the stale one lands last, the draft is still in
+    // localStorage -- reopening the box restores it and saves it again.
+    beacon() {
+      clearTimeout(timer);
+      const payload = collect();
+      if (same(payload, saved)) return;
+      draft.write(id, payload);
+      try {
+        fetch(`./api/boxes/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+          keepalive: true,
+        });
+      } catch { /* the draft stands in */ }
+    },
+    // Navigating away within the app: let any in-flight save finish, but stop
+    // touching a view that is no longer on screen.
+    detach() {
+      clearTimeout(timer); clearTimeout(retry);
+      live = false;
+    },
+    forget() { this.detach(); dirty = false; draft.clear(id); },
+  };
+}
+
 /* ---------- box ---------- */
 
 function itemRow(value = '') {
   return `<li><input class="input item" value="${esc(value)}" placeholder="One thing in the box">
     <button class="btn item-remove" type="button" aria-label="Remove">&minus;</button></li>`;
 }
+
+const clockTime = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 async function renderBox(rawId) {
   const id = rawId.toUpperCase();
@@ -263,84 +392,130 @@ async function renderBox(rawId) {
   }
 
   const data = await api(`boxes/${encodeURIComponent(id)}`);
-  const box = data.box ?? { name: '', location: '', notes: '', items: [] };
+  const box = data.box ?? {};
   const claimed = data.claimed;
+
+  const server = {
+    name: box.name ?? '',
+    location: box.location ?? '',
+    notes: box.notes ?? '',
+    items: box.items ?? [],
+  };
+
+  // A draft left over from a save that never completed -- a refresh mid-edit,
+  // a dead connection, a closed tab. It is newer than the server by
+  // definition, so it wins. One that matches the server has done its job.
+  const pending = draft.read(id);
+  const restored = Boolean(pending) && !same(pending, server);
+  if (pending && !restored) draft.clear(id);
+  const initial = restored ? pending : server;
 
   view.innerHTML = `
     <div class="row" style="margin-bottom:12px">
       <span class="idtext">${esc(id)}</span>
-      <span class="chip ${claimed ? '' : 'chip-warn'}">${claimed ? 'claimed' : 'empty'}</span>
+      <span class="chip ${claimed ? '' : 'chip-warn'}" id="claim-chip">${claimed ? 'claimed' : 'empty'}</span>
     </div>
-    ${claimed ? '' : `<p class="notice" style="margin-bottom:12px">Nothing recorded against this label yet. Fill it in and it becomes a box.</p>`}
+    ${claimed ? '' : `<p class="notice" id="unclaimed-note" style="margin-bottom:12px">Nothing recorded against this label yet. Fill it in and it becomes a box.</p>`}
+    ${restored ? `<p class="notice notice-warn" id="restored-note" style="margin-bottom:12px">Changes from this device had not reached the server. They are back in the form below and being saved now.</p>` : ''}
     <form class="card" id="box-form">
       <div class="field">
         <label class="field-label" for="name">What is it</label>
-        <input class="input" id="name" value="${esc(box.name)}" placeholder="Winter clothes">
+        <input class="input" id="name" value="${esc(initial.name)}" placeholder="Winter clothes">
       </div>
       <div class="field">
         <label class="field-label" for="location">Where it lives</label>
-        <input class="input" id="location" value="${esc(box.location)}" placeholder="Basement, shelf 3">
+        <input class="input" id="location" value="${esc(initial.location)}" placeholder="Basement, shelf 3">
       </div>
       <div class="field">
         <label class="field-label">Contents</label>
-        <ul class="items" id="items">${(box.items ?? []).map(itemRow).join('')}</ul>
+        <ul class="items" id="items">${initial.items.map(itemRow).join('')}</ul>
         <button class="btn" type="button" id="add-item" style="margin-top:8px">Add item</button>
       </div>
       <div class="field">
         <label class="field-label" for="notes">Notes</label>
-        <textarea class="textarea" id="notes" placeholder="Anything else worth knowing">${esc(box.notes)}</textarea>
+        <textarea class="textarea" id="notes" placeholder="Anything else worth knowing">${esc(initial.notes)}</textarea>
       </div>
+      <p class="notice notice-warn hidden" id="save-error" style="margin-bottom:12px"></p>
       <div class="btn-row">
-        <button class="btn btn-primary" type="submit" id="save">Save</button>
         <button class="btn" type="button" onclick="location.hash='#/scan'">Scan another</button>
-        ${claimed ? '<button class="btn btn-danger" type="button" id="delete">Empty this box</button>' : ''}
+        <button class="btn btn-danger ${claimed ? '' : 'hidden'}" type="button" id="delete">Empty this box</button>
       </div>
-      <p class="notice notice-ok hidden" id="saved" style="margin-top:12px">Saved.</p>
+      <p class="muted" style="margin:12px 0 0">Saved as you type. There is nothing to press.</p>
     </form>
-    ${claimed && box.updated_at ? `<p class="muted">Last changed ${new Date(box.updated_at).toLocaleString()}.</p>` : ''}`;
+    <p class="muted" id="changed-at">${claimed && box.updated_at ? `Last changed ${new Date(box.updated_at).toLocaleString()}.` : ''}</p>`;
 
   const items = $('#items');
   if (!items.children.length) items.insertAdjacentHTML('beforeend', itemRow());
+
+  // Closed over the elements rather than looking them up by id, so a save
+  // still in flight after the view has been replaced reads the right values.
+  const nameEl = $('#name'), locEl = $('#location'), notesEl = $('#notes');
+  const pill = $('#savestate'), problem = $('#save-error');
+
+  const collect = () => ({
+    name: nameEl.value,
+    location: locEl.value,
+    notes: notesEl.value,
+    items: [...items.querySelectorAll('.item')].map((i) => i.value.trim()).filter(Boolean),
+  });
+
+  const LABELS = { saving: 'Saving', saved: 'Saved', error: 'Not saved' };
+
+  function onState(kind, extra) {
+    if (kind === 'auth') { activeSave?.detach(); return renderSignIn(); }
+
+    pill.className = `savestate savestate-${kind}`;
+    pill.textContent = kind === 'saved' ? `Saved ${clockTime()}` : LABELS[kind] ?? '';
+
+    problem.classList.toggle('hidden', kind !== 'error');
+    if (kind === 'error') {
+      problem.textContent =
+        `${extra?.message || 'Could not reach the server'}. Your typing is held on this device and will go up by itself once the connection is back — it is safe to close this page.`;
+    }
+
+    if (kind === 'saved') {
+      const chip = $('#claim-chip');
+      if (chip) { chip.textContent = 'claimed'; chip.className = 'chip'; }
+      $('#unclaimed-note')?.remove();
+      $('#restored-note')?.remove();
+      $('#delete')?.classList.remove('hidden');
+      const at = extra?.box?.updated_at;
+      if (at && $('#changed-at')) $('#changed-at').textContent = `Last changed ${new Date(at).toLocaleString()}.`;
+    }
+  }
+
+  const save = autosaver(id, collect, onState, server);
+  activeSave = save;
+
+  const form = $('#box-form');
+  // input bubbles from every field, including item rows added later.
+  form.addEventListener('input', () => save.touch());
+  // Leaving a field is a natural commit point, and beats the debounce to it.
+  form.addEventListener('focusout', () => save.now());
+  // Enter in a text input would otherwise submit the form and reload the page.
+  form.addEventListener('submit', (e) => { e.preventDefault(); save.now(); });
 
   $('#add-item').addEventListener('click', () => {
     items.insertAdjacentHTML('beforeend', itemRow());
     items.lastElementChild.querySelector('.item').focus();
   });
+
   items.addEventListener('click', (e) => {
     if (!e.target.classList.contains('item-remove')) return;
     e.target.closest('li').remove();
     if (!items.children.length) items.insertAdjacentHTML('beforeend', itemRow());
+    save.touch();
   });
 
-  $('#box-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = $('#save');
-    btn.disabled = true; btn.textContent = 'Saving…';
-    try {
-      await api(`boxes/${encodeURIComponent(id)}`, {
-        method: 'PUT',
-        body: {
-          name: $('#name').value,
-          location: $('#location').value,
-          notes: $('#notes').value,
-          items: [...items.querySelectorAll('.item')].map((i) => i.value.trim()).filter(Boolean),
-        },
-      });
-      $('#saved').classList.remove('hidden');
-      setTimeout(() => $('#saved')?.classList.add('hidden'), 2000);
-    } catch (err) {
-      if (err instanceof AuthError) return renderSignIn();
-      alert(err.message);
-    } finally {
-      btn.disabled = false; btn.textContent = 'Save';
-    }
-  });
-
-  $('#delete')?.addEventListener('click', async () => {
+  $('#delete').addEventListener('click', async () => {
     if (!confirm(`Clear everything recorded against ${id}? The label stays printed and can be reused.`)) return;
+    save.forget();                 // no pending edit may resurrect the box
+    activeSave = null;
     await api(`boxes/${encodeURIComponent(id)}`, { method: 'DELETE' });
     render();
   });
+
+  if (restored) save.touch();
 }
 
 /* ---------- search ---------- */
@@ -411,13 +586,24 @@ document.querySelectorAll('.tab').forEach((t) =>
   t.addEventListener('click', () => go(t.dataset.route)));
 
 $('#signout').addEventListener('click', async () => {
+  leaveBox();                       // send a half-typed box before the session goes
   await api('session', { method: 'DELETE' }).catch(() => {});
   renderSignIn();
 });
 
 window.addEventListener('hashchange', render);
-window.addEventListener('pagehide', stopCamera);
-document.addEventListener('visibilitychange', () => { if (document.hidden) stopCamera(); });
+
+// Three ways a phone takes the page away mid-edit: a swipe, a lock, a tab
+// switch. All of them get the pending edit sent with keepalive, and all of
+// them have the localStorage draft behind that.
+window.addEventListener('pagehide', () => { stopCamera(); activeSave?.beacon(); });
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) return;
+  stopCamera();
+  activeSave?.beacon();
+});
+// Back from a dead tunnel or a dropped wifi: retry without waiting for a keystroke.
+window.addEventListener('online', () => activeSave?.now());
 
 (async () => {
   const { authenticated } = await api('session').catch(() => ({ authenticated: false }));

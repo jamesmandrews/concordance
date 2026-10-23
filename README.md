@@ -14,6 +14,15 @@ Quire is deliberately stateless; Concordance is where the knowledge lives.
 - **Claim** a blank label — print first, decide what goes in it later
 - **Search** every item, name, location and note at once
 
+Nothing is saved by hand. The box form writes as you type, because the way a
+box actually gets filled in — standing over it, one hand holding a phone,
+keyboard covering the bottom of the screen — is the way a save button gets
+missed. Every edit goes to a draft in `localStorage` first and to the server
+on a 600 ms debounce; the draft is dropped only once the server confirms the
+exact payload it holds. So a refresh, a locked phone, a swiped-away tab or a
+dead connection all end with the typing still there, and it goes up by itself
+when the network comes back.
+
 ## Stack
 
 PostgreSQL, Node, Docker Compose. No third-party services.
